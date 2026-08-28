@@ -266,6 +266,9 @@ type piSender struct {
 }
 
 func (s *piSender) send(frame *pb.ChannelFrame) error {
+	// s.mu is held for the WHOLE function — the send/forward path and the
+	// recv/ACK path (acknowledge) synchronize on the same mutex, so the
+	// lastSeq write here and the lastSeq read in acknowledge cannot race.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	frame.RequestId = s.request
