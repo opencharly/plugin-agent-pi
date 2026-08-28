@@ -108,7 +108,7 @@ func (provider) OpenChannel(open *pb.ChannelFrame, stream sdk.ProviderChannel) e
 	if err != nil {
 		return err
 	}
-	sender := &piSender{stream: stream, request: open.GetRequestId(), next: open.GetAckSequence() + 1, replay: sdk.NewReplayBuffer(4096, 32<<20)}
+	sender := &piSender{stream: stream, request: open.GetRequestId(), next: open.GetAckSequence() + 1, replay: sdk.NewReplayBuffer(4096, 32<<20), acked: make(chan struct{})}
 	return runPiProcess(ctx, cancel, stream, process, sender, request)
 }
 
@@ -182,6 +182,16 @@ func runPiProcess(ctx context.Context, cancel context.CancelFunc, stream sdk.Pro
 		if returnErr != nil && !errors.Is(returnErr, io.EOF) {
 			cancel()
 		}
+		// Wait for the client to acknowledge the last frame (settled) before
+		// sending ChannelExit and letting the helper process exit. Without this
+		// the helper exits immediately after forwardPiOutput returns, and the
+		// SSH teardown closes the stdio pipes while the client is still reading
+		// — the unread frames are lost and the client sees a bare EOF. The wait
+		// is bounded by ctx (the stream context), never a sleep.
+		select {
+		case <-sender.acked:
+		case <-ctx.Done():
+		}
 		returnErr = finishPiProcess(stream, process, sender, returnErr)
 	}()
 	if err := sender.send(&pb.ChannelFrame{Kind: sdk.ChannelStatus, Name: "running"}); err != nil {
@@ -246,15 +256,26 @@ type piSender struct {
 	request string
 	next    uint64
 	replay  *sdk.ReplayBuffer
+	// lastSeq is the sequence of the most recently sent non-ACK frame; acked is
+	// closed the moment the client acknowledges a sequence >= lastSeq. The exit
+	// path waits on acked so the client has actually received the frames before
+	// the helper process exits — otherwise the SSH teardown races the client's
+	// Recv and swallows unread frames (the bare-EOF flake).
+	lastSeq uint64
+	acked   chan struct{}
 }
 
 func (s *piSender) send(frame *pb.ChannelFrame) error {
+	// s.mu is held for the WHOLE function — the send/forward path and the
+	// recv/ACK path (acknowledge) synchronize on the same mutex, so the
+	// lastSeq write here and the lastSeq read in acknowledge cannot race.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	frame.RequestId = s.request
 	if frame.Kind != sdk.ChannelAck {
 		frame.Sequence = s.next
 		s.next++
+		s.lastSeq = frame.Sequence
 		if err := s.replay.Add(frame); err != nil {
 			return fmt.Errorf("plugin-agent-pi: preserving unacknowledged agent evidence: %w", err)
 		}
@@ -262,7 +283,18 @@ func (s *piSender) send(frame *pb.ChannelFrame) error {
 	return s.stream.Send(frame)
 }
 
-func (s *piSender) acknowledge(sequence uint64) { s.replay.Acknowledge(sequence) }
+func (s *piSender) acknowledge(sequence uint64) {
+	s.replay.Acknowledge(sequence)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sequence >= s.lastSeq {
+		select {
+		case <-s.acked:
+		default:
+			close(s.acked)
+		}
+	}
+}
 
 func (s *piSender) replayFrom(sequence uint64) error {
 	s.mu.Lock()

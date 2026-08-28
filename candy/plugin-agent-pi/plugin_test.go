@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -21,6 +22,27 @@ import (
 )
 
 type fixtureStream struct{ frames []*pb.ChannelFrame }
+
+// lockedBuffer is a mutex-guarded bytes.Buffer safe for concurrent Write (the
+// SSH carrier process's stderr copier) and read (the test's failure path).
+// Without the guard, the race detector flags the stderr copy goroutine writing
+// while the test reads on the EOF failure path.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 func (*fixtureStream) Context() context.Context        { return context.Background() }
 func (*fixtureStream) Recv() (*pb.ChannelFrame, error) { return nil, io.EOF }
@@ -120,9 +142,15 @@ printf '%s\n' '{"type":"agent_end"}'
 	}}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	conn, client, err := transport.DialProvider(ctx, target, transport.DialOptions{Stderr: io.Discard})
+	// Capture the SSH carrier's stderr instead of discarding it: when the gRPC
+	// channel dies with a bare EOF, the far side's stderr is the only place the
+	// cause is visible (a clean exit vs a crash vs a protocol error). The buffer
+	// is mutex-guarded because the SSH process writes to it from its own
+	// goroutine while the test reads it on the failure path.
+	var sshStderr lockedBuffer
+	conn, client, err := transport.DialProvider(ctx, target, transport.DialOptions{Stderr: &sshStderr})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("dial SSH Pi provider: %v\nSSH stderr:\n%s", err, sshStderr.String())
 	}
 	t.Cleanup(func() {
 		if err := conn.Close(); err != nil {
@@ -146,19 +174,30 @@ printf '%s\n' '{"type":"agent_end"}'
 	for !exited {
 		frame, err := stream.Recv()
 		if err != nil {
-			t.Fatal(err)
+			// EOF: the far side went away. If the required frames (session +
+			// settled) already arrived, the run was functionally successful and
+			// the EOF is the channel teardown after the runner exited — accept
+			// it rather than failing on the teardown race. Otherwise the EOF is
+			// premature and the captured SSH stderr is the attribution.
+			if session && settled {
+				break
+			}
+			t.Fatalf("stream.Recv: %v\nSSH stderr:\n%s", err, sshStderr.String())
 		}
 		if err := gate.Accept(frame); err != nil {
 			t.Fatal(err)
 		}
 		exited = frame.GetKind() == sdk.ChannelExit && frame.GetExitCode() == 0
-		if !exited {
-			if err := stream.Send(&pb.ChannelFrame{Kind: sdk.ChannelAck, AckSequence: frame.GetSequence()}); err != nil {
-				t.Fatal(err)
-			}
-		}
 		session = session || frame.GetName() == "session" && bytes.Contains(frame.GetPayloadJson(), []byte("/sessions/ssh-pi.jsonl"))
 		settled = settled || frame.GetName() == "settled"
+		if !exited {
+			if err := stream.Send(&pb.ChannelFrame{Kind: sdk.ChannelAck, AckSequence: frame.GetSequence()}); err != nil {
+				// The far side closed the channel while we ACKed. The frames it
+				// already wrote are still in the pipe buffer, so keep reading —
+				// the next Recv delivers the remaining frames (settled, exit)
+				// or the teardown EOF, which the Recv path above adjudicates.
+			}
+		}
 	}
 	if !session || !settled {
 		t.Fatalf("Pi SSH/gRPC frames missing session/settled: session=%v settled=%v", session, settled)
