@@ -1,7 +1,5 @@
-version: 2026.232.0520
 plugin-agent-pi:
     candy:
-        version: 2026.199.1330
         description: |-
             Generic agent-runtime:pi provider. Launches the ephemeral native Pi
             SDK runner, carries Pi's upstream runRpcMode JSONL over the generic
