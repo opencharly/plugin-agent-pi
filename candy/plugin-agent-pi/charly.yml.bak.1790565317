@@ -1,5 +1,7 @@
+version: 2026.232.0520
 plugin-agent-pi:
     candy:
+        version: 2026.199.1330
         description: |-
             Generic agent-runtime:pi provider. Launches the ephemeral native Pi
             SDK runner, carries Pi's upstream runRpcMode JSONL over the generic
@@ -12,7 +14,7 @@ plugin-agent-pi:
             providers:
                 - agent-runtime:pi
         require:
-            - '@github.com/opencharly/layer-pi-agent:v2026.239.1638'
+            - '@github.com/opencharly/layer-pi-agent:v2026.237.557'
         plan:
             - check: the compiled provider registry exposes Pi as a typed streaming agent runtime
               context: [runtime]
