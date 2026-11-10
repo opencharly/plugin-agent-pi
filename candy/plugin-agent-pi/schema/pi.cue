@@ -11,27 +11,27 @@
 	// S3: the words are rows of the `_commandType` table at the foot of this
 	// file; the enum is `or()` of its derived word list, so the catalog has ONE
 	// home.
-	type:     or(_commandTypeWord)
-	message?: string
-	images?: [...]
-	streamingBehavior?:  or(_streamingBehaviorWord)
-	parentSession?:      string
-	provider?:           string & !=""
-	modelId?:            string & !=""
-	level?:              string & !=""
-	mode?:               or(_modeWord)
-	customInstructions?: string
-	enabled?:            bool
-	command?:            string
-	excludeFromContext?: bool
-	outputPath?:         string
-	sessionPath?:        string & !=""
-	entryId?:            string & !=""
-	since?:              string
-	name?:               string & !=""
-	value?:              string
-	confirmed?:          bool
-	cancelled?:          bool
+	type: or(_commandTypeWord)
+	message?:               string
+	images?: [..._]
+	streamingBehavior?:     or(_streamingBehaviorWord)
+	parentSession?:         string
+	provider?:              string & !=""
+	modelId?:               string & !=""
+	level?:                 string & !=""
+	mode?:                  or(_modeWord)
+	customInstructions?:    string
+	enabled?:               bool
+	command?:               string
+	excludeFromContext?:    bool
+	outputPath?:            string
+	sessionPath?:           string & !=""
+	entryId?:               string & !=""
+	since?:                 string
+	name?:                  string & !=""
+	value?:                 string
+	confirmed?:             bool
+	cancelled?:             bool
 }
 
 #PiGetStateCommand: {
@@ -63,18 +63,18 @@
 }
 
 #PiRPCState: {
-	model?:                _
-	thinkingLevel:         string & !=""
-	isStreaming:           bool
-	isCompacting:          bool
-	steeringMode:          or(_modeWord)
-	followUpMode:          or(_modeWord)
-	sessionFile?:          string @go(SessionFile)
-	sessionId:             string & !=""
-	sessionName?:          string
-	autoCompactionEnabled: bool
-	messageCount:          int & >=0
-	pendingMessageCount:   int & >=0
+	model?:                  _
+	thinkingLevel:           string & !=""
+	isStreaming:             bool
+	isCompacting:            bool
+	steeringMode:            or(_modeWord)
+	followUpMode:            or(_modeWord)
+	sessionFile?:            string @go(SessionFile)
+	sessionId:               string & !=""
+	sessionName?:            string
+	autoCompactionEnabled:   bool
+	messageCount:            int & >=0
+	pendingMessageCount:     int & >=0
 }
 
 #PiRPCStateResponse: {
