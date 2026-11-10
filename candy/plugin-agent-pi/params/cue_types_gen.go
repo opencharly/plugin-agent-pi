@@ -14,6 +14,9 @@ type PiPlugin struct {
 type PiRPCCommand struct {
 	Id string `yaml:"id,omitempty" json:"id,omitempty"`
 
+	// S3: the words are rows of the `_commandType` table at the foot of this
+	// file; the enum is `or()` of its derived word list, so the catalog has ONE
+	// home.
 	Type string `yaml:"type,omitempty" json:"type"`
 
 	Message string `yaml:"message,omitempty" json:"message,omitempty"`
